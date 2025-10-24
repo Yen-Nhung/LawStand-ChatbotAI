@@ -1,0 +1,13 @@
+# --- Framework Backend ---
+Flask
+flask-cors
+
+# --- Dịch vụ AI & Tìm kiếm của Google ---
+google-generativeai
+google-api-python-client
+
+# --- Công cụ Web Scraping & Môi trường ---
+trafilatura
+requests
+beautifulsoup4
+python-dotenv
