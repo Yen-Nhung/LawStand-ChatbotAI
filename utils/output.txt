@@ -1,0 +1,697 @@
+
+===== .\eslint.config.js =====
+import js from "@eslint/js";
+import globals from "globals";
+import reactHooks from "eslint-plugin-react-hooks";
+import reactRefresh from "eslint-plugin-react-refresh";
+import { defineConfig, globalIgnores } from "eslint/config";
+
+export default defineConfig([
+  globalIgnores(["dist"]),
+  {
+    files: ["**/*.{js,jsx}"],
+    extends: [
+      js.configs.recommended,
+      reactHooks.configs["recommended-latest"],
+      reactRefresh.configs.vite,
+    ],
+    languageOptions: {
+      ecmaVersion: 2020,
+      globals: globals.browser,
+      parserOptions: {
+        ecmaVersion: "latest",
+        ecmaFeatures: { jsx: true },
+        sourceType: "module",
+      },
+    },
+    rules: {
+      "no-unused-vars": ["error", { varsIgnorePattern: "^[A-Z_]" }],
+      "react/prop-types": "off",
+    },
+  },
+]);
+
+
+===== .\index.html =====
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Chatbot in Reactjs</title>
+    <!-- Linking Google Fonts for Icons -->
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@48,400,1,0"
+    />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
+
+
+===== .\package.json =====
+{
+  "name": "package.json",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "lint": "eslint .",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.33.0",
+    "@types/react": "^19.1.10",
+    "@types/react-dom": "^19.1.7",
+    "@vitejs/plugin-react": "^5.0.0",
+    "eslint": "^9.33.0",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "eslint-plugin-react-refresh": "^0.4.20",
+    "globals": "^16.3.0",
+    "vite": "^7.1.2"
+  }
+}
+
+
+===== .\vite.config.js =====
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+
+// https://vite.dev/config/
+export default defineConfig({
+  plugins: [react()],
+})
+
+
+===== .\src\App.jsx =====
+import { useRef, useState } from "react";
+import ChatbotIcon from "./components/ChatbotIcon";
+import ChatForm from "./components/ChatForm";
+import ChatMessage from "./components/ChatMessage";
+import { useEffect } from "react";
+import { companyInfo } from "./components/companyInfo";
+
+const App = () => {
+  const [chatHistory, setChatHistory] = useState([
+    {
+      hideInChat: true,
+      role: "model",
+      text: companyInfo,
+    },
+  ]);
+  const [showChatbot, setShowChatbot] = useState(false);
+  const chatBodyRef = useRef();
+
+  const generateBotResponse = async (history) => {
+    // Helper function to update chat history
+    const updateHistory = (text, isError = false) => {
+      setChatHistory((prev) => [
+        ...prev.filter((msg) => msg.text !== "Thinking..."),
+        { role: "model", text, isError },
+      ]);
+    };
+
+    //Format chat history for the API request
+    history = history.map(({ role, text }) => ({ role, parts: [{ text }] }));
+
+    const requestOptions = {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ contents: history }),
+    };
+
+    const maxRetries = 3; // Set a maximum number of retries
+    let retries = 0;
+
+    while (retries < maxRetries) {
+      try {
+        // Make the API call to get the bot's response
+        const response = await fetch(
+          import.meta.env.VITE_API_URL,
+          requestOptions
+        );
+
+        if (response.status === 503) {
+          // If it's a 503 error, wait and retry
+          retries++;
+          console.warn(
+            `503 Service Unavailable. Retrying... Attempt ${retries}`
+          );
+          await new Promise((resolve) => setTimeout(resolve, 1000 * retries)); // Wait longer on subsequent retries
+          continue; // Skip to the next iteration of the loop
+        }
+
+        const data = await response.json();
+        if (!response.ok)
+          throw new Error(data.error.message || "Something went wrong");
+
+        // Clean and update chat history with the bot's response
+        const apiResonseText = data.candidates[0].content.parts[0].text
+          .replace(/\*\*(.*?)\*\*/g, "$1")
+          .trim();
+        updateHistory(apiResonseText);
+        break; // Exit the loop on success
+      } catch (error) {
+        if (
+          retries === maxRetries - 1 ||
+          error.message !== "Something went wrong"
+        ) {
+          // If max retries reached or it's not a generic error, update history with the error
+          updateHistory(error.message, true);
+          break; // Exit the loop after handling the error
+        }
+        retries++;
+        console.warn(`Error fetching response. Retrying... Attempt ${retries}`);
+        await new Promise((resolve) => setTimeout(resolve, 1000 * retries)); // Wait longer on subsequent retries
+      }
+    }
+
+    if (retries === maxRetries) {
+      updateHistory(
+        "Service is currently unavailable. Please try again later.",
+        true
+      );
+    }
+  };
+
+  useEffect(() => {
+    // Auto-scroll whenever chat history updates
+    chatBodyRef.current.scrollTo({
+      top: chatBodyRef.current.scrollHeight,
+      behavior: "smooth",
+    });
+  }, [chatHistory]);
+
+  return (
+    <div className={`container ${showChatbot ? "show-chatbot" : ""}`}>
+      <button
+        onClick={() => setShowChatbot((prev) => !prev)}
+        id="chatbot-toggler"
+      >
+        <span className="material-symbols-outlined">mode_comment</span>
+        <span className="material-symbols-outlined">close</span>
+      </button>
+
+      <div className="chatbot-popup">
+        {/* Chatbot Header */}
+        <div className="chat-header">
+          <div className="header-info">
+            <ChatbotIcon />
+            <h2 className="logo-text">Chatbot</h2>
+          </div>
+          <button
+            onClick={() => setShowChatbot((prev) => !prev)}
+            className="material-symbols-outlined"
+          >
+            keyboard_arrow_down
+          </button>
+        </div>
+        {/* Chatbot Body */}
+        <div ref={chatBodyRef} className="chat-body">
+          <div className="message bot-message">
+            <ChatbotIcon />
+            <p className="message-text">Hello 👋! How can I help you today?</p>
+          </div>
+
+          {/* Render the chat history dynamically */}
+          {chatHistory.map((chat, index) => (
+            <ChatMessage key={index} chat={chat} />
+          ))}
+        </div>
+
+        {/* Chatbot Footer */}
+        <div className="chat-footer">
+          <ChatForm
+            chatHistory={chatHistory}
+            setChatHistory={setChatHistory}
+            generateBotResponse={generateBotResponse}
+          />
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default App;
+
+
+===== .\src\index.css =====
+@import url("https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,100..900&display=swap");
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  font-family: "Inter", sans-serif;
+}
+
+body {
+  width: 100%;
+  min-height: 100vh;
+  background: linear-gradient(#f4f0ff, #dacdff);
+}
+
+#chatbot-toggler {
+  position: fixed;
+  bottom: 30px;
+  right: 35px;
+  height: 50px;
+  width: 50px;
+  border: none;
+  display: flex;
+  cursor: pointer;
+  border-radius: 50%;
+  background: #6d4fc2;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+}
+
+#chatbot-toggler span {
+  position: absolute;
+  color: #fff;
+}
+
+.container.show-chatbot #chatbot-toggler {
+  transform: rotate(90deg);
+}
+
+#chatbot-toggler span:last-child,
+.container.show-chatbot #chatbot-toggler span:first-child {
+  opacity: 0;
+}
+
+.container.show-chatbot #chatbot-toggler span:last-child {
+  opacity: 1;
+}
+
+.chatbot-popup {
+  position: fixed;
+  opacity: 0;
+  pointer-events: none;
+  bottom: 90px;
+  right: 35px;
+  width: 420px;
+  transform: scale(0.2);
+  overflow: hidden;
+  background: #fff;
+  border-radius: 15px;
+  transform-origin: bottom right;
+  box-shadow: 0 0 128px 0 rgba(0, 0, 0, 0.1),
+    0 32px 64px -48px rgba(0, 0, 0, 0.5);
+  transition: all 0.1s ease;
+}
+
+.container.show-chatbot .chatbot-popup {
+  opacity: 1;
+  transform: scale(1);
+  pointer-events: auto;
+}
+
+.chatbot-popup .chat-header {
+  display: flex;
+  padding: 15px 22px;
+  align-items: center;
+  justify-content: space-between;
+  background: #6d4fc2;
+}
+
+.chat-header .header-info {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.header-info svg {
+  height: 35px;
+  width: 35px;
+  padding: 6px;
+  flex-shrink: 0;
+  fill: #6d4fc2;
+  background: #fff;
+  border-radius: 50%;
+}
+
+.header-info .logo-text {
+  color: #fff;
+  font-size: 1.31rem;
+  font-weight: 600;
+}
+
+.chat-header button {
+  height: 40px;
+  width: 40px;
+  border: none;
+  outline: none;
+  color: #fff;
+  cursor: pointer;
+  font-size: 1.9rem;
+  padding-top: 2px;
+  border-radius: 50%;
+  margin-right: -10px;
+  background: none;
+  transition: 0.2s ease;
+}
+
+.chat-header button:hover {
+  background: #593bab;
+}
+
+.chat-body {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  height: 460px;
+  margin-bottom: 82px;
+  overflow-y: auto;
+  padding: 25px 22px;
+  scrollbar-width: thin;
+  scrollbar-color: #ddd3f9 transparent;
+}
+
+.chat-body .message {
+  display: flex;
+  gap: 11px;
+  align-items: center;
+}
+
+.chat-body .message.error .message-text {
+  color: red;
+}
+
+.chat-body .bot-message svg {
+  height: 35px;
+  width: 35px;
+  padding: 6px;
+  flex-shrink: 0;
+  fill: #fff;
+  align-self: flex-end;
+  margin-bottom: 2px;
+  background: #6d4fc2;
+  border-radius: 50%;
+}
+
+.chat-body .message .message-text {
+  padding: 12px 16px;
+  max-width: 75%;
+  word-wrap: break-word;
+  white-space: pre-line;
+  font-size: 0.95rem;
+}
+
+.chat-body .bot-message .message-text {
+  background: #f6f2ff;
+  border-radius: 13px 13px 13px 3px;
+}
+
+.chat-body .user-message {
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.chat-body .user-message .message-text {
+  background: #6d4fc2;
+  color: #fff;
+  border-radius: 13px 13px 3px 13px;
+}
+
+.chat-footer {
+  position: absolute;
+  bottom: 0;
+  width: 100%;
+  background: #fff;
+  padding: 15px 22px 20px;
+}
+
+.chat-footer .chat-form {
+  display: flex;
+  align-items: center;
+  background: #fff;
+  border-radius: 32px;
+  outline: 1px solid #cccce5;
+  box-shadow: 0 0 8px 0 rgba(0, 0, 0, 0.06);
+}
+
+.chat-footer .chat-form:focus-within {
+  outline: 2px solid #6d4fc2;
+}
+
+.chat-form .message-input {
+  border: none;
+  outline: none;
+  width: 100%;
+  background: none;
+  height: 47px;
+  padding: 0 17px;
+  font-size: 0.95rem;
+}
+
+.chat-form button {
+  height: 35px;
+  width: 35px;
+  border: none;
+  display: none;
+  outline: none;
+  cursor: pointer;
+  font-size: 1.15rem;
+  color: #fff;
+  flex-shrink: 0;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: #6d4fc2;
+  transition: 0.2s ease;
+}
+
+.chat-form button:hover {
+  background: #593bab;
+}
+
+.chat-form .message-input:valid ~ button {
+  display: block;
+}
+
+/* Responsive media query for mobile screen */
+@media (max-width: 520px) {
+  #chatbot-toggler {
+    bottom: 20px;
+    right: 20px;
+  }
+
+  .chatbot-popup {
+    width: 100%;
+    height: 100%;
+    border-radius: 0;
+    bottom: 0;
+    right: 0;
+  }
+
+  .chatbot-popup .chat-header {
+    padding: 12px 15px;
+  }
+
+  .chat-body {
+    height: calc(90% - 55px);
+    padding: 25px 15px;
+  }
+
+  .chat-footer {
+    padding: 10px 15px 15px;
+  }
+}
+
+
+===== .\src\main.jsx =====
+import { StrictMode } from 'react'
+import { createRoot } from 'react-dom/client'
+import './index.css'
+import App from './App.jsx'
+
+createRoot(document.getElementById('root')).render(
+  <StrictMode>
+    <App />
+  </StrictMode>,
+)
+
+
+===== .\src\components\ChatbotIcon.jsx =====
+const ChatbotIcon = () => {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="50"
+      height="50"
+      viewBox="0 0 1024 1024"
+    >
+      <path d="M738.3 287.6H285.7c-59 0-106.8 47.8-106.8 106.8v303.1c0 59 47.8 106.8 106.8 106.8h81.5v111.1c0 .7.8 1.1 1.4.7l166.9-110.6 41.8-.8h117.4l43.6-.4c59 0 106.8-47.8 106.8-106.8V394.5c0-59-47.8-106.9-106.8-106.9zM351.7 448.2c0-29.5 23.9-53.5 53.5-53.5s53.5 23.9 53.5 53.5-23.9 53.5-53.5 53.5-53.5-23.9-53.5-53.5zm157.9 267.1c-67.8 0-123.8-47.5-132.3-109h264.6c-8.6 61.5-64.5 109-132.3 109zm110-213.7c-29.5 0-53.5-23.9-53.5-53.5s23.9-53.5 53.5-53.5 53.5 23.9 53.5 53.5-23.9 53.5-53.5 53.5zM867.2 644.5V453.1h26.5c19.4 0 35.1 15.7 35.1 35.1v121.1c0 19.4-15.7 35.1-35.1 35.1h-26.5zM95.2 609.4V488.2c0-19.4 15.7-35.1 35.1-35.1h26.5v191.3h-26.5c-19.4 0-35.1-15.7-35.1-35.1zM561.5 149.6c0 23.4-15.6 43.3-36.9 49.7v44.9h-30v-44.9c-21.4-6.5-36.9-26.3-36.9-49.7 0-28.6 23.3-51.9 51.9-51.9s51.9 23.3 51.9 51.9z" />
+    </svg>
+  );
+};
+
+export default ChatbotIcon;
+
+
+===== .\src\components\ChatForm.jsx =====
+import { useRef } from "react";
+
+const ChatForm = ({ chatHistory, setChatHistory, generateBotResponse }) => {
+  const inputRef = useRef();
+
+  const handleFormSubmit = (e) => {
+    e.preventDefault();
+    const userMessage = inputRef.current.value.trim();
+    if (!userMessage) return;
+    inputRef.current.value = "";
+
+    // Update chat history with the user's message
+    setChatHistory((history) => [
+      ...history,
+      { role: "user", text: userMessage },
+    ]);
+
+    // Delay 600 ms before showing "Thinking..." and generating bot response
+    setTimeout(() => {
+      // Add a "Thinking..." placeholder for the bot's response
+      setChatHistory((history) => [
+        ...history,
+        { role: "model", text: "Thinking..." },
+      ]);
+
+      // Call the function to generate the bot's response
+      generateBotResponse([
+        ...chatHistory,
+        {
+          role: "user",
+          text: `Using the details provided above, please address this query: ${userMessage}`,
+        },
+      ]);
+    });
+  };
+
+  return (
+    <form action="#" className="chat-form" onSubmit={handleFormSubmit}>
+      <input
+        ref={inputRef}
+        type="text"
+        placeholder="Message..."
+        className="message-input"
+        required
+      />
+      <button className="material-symbols-outlined">arrow_upward</button>
+    </form>
+  );
+};
+
+export default ChatForm;
+
+
+===== .\src\components\ChatMessage.jsx =====
+import ChatbotIcon from "./ChatbotIcon";
+const ChatMessage = ({ chat }) => {
+  return (
+    !chat.hideInChat && (
+      <div
+        className={`message ${chat.role === "model" ? "bot" : "user"}-message ${
+          chat.isError ? "error" : ""
+        }`}
+      >
+        {chat.role === "model" && <ChatbotIcon />}
+        <p className="message-text">{chat.text}</p>
+      </div>
+    )
+  );
+};
+
+export default ChatMessage;
+
+
+===== .\src\components\companyInfo.js =====
+export const companyInfo = `
+Giới thiệu:
+Xin chào! Tôi là chatbot pháp lý của Lawstand, sẵn sàng hỗ trợ bạn trong việc tóm tắt văn bản pháp luật, giải đáp thủ tục cơ bản và kết nối với luật sư uy tín.
+
+Chi tiết:
+Lawstand là nền tảng pháp lý số (LegalTech) thuộc startup LinkSpace. Sứ mệnh của chúng tôi là giúp người Việt, Việt kiều và người nước ngoài tại Việt Nam tiếp cận thông tin pháp luật minh bạch, dễ hiểu và hiệu quả. 
+Các tính năng chính:
+- Tóm tắt văn bản pháp luật bằng AI, kèm ví dụ thực tế.
+- Chatbot AI 24/7 trả lời câu hỏi pháp lý cơ bản.
+- Kết nối trực tuyến với luật sư có chứng chỉ và đánh giá minh bạch.
+- Hỗ trợ đa ngôn ngữ: Tiếng Việt, Tiếng Anh (sắp tới mở rộng Hàn/Nhật).
+- Gói dịch vụ linh hoạt: miễn phí cơ bản, nâng cấp trả phí khi cần tư vấn chuyên sâu.
+
+Liên hệ:
+Website: https://www.lawstand.vn
+Email: support@lawstand.vn
+Hotline: +84 123 456 789
+Địa chỉ: Tầng 5, Tòa nhà LinkSpace, Hà Nội, Việt Nam
+Facebook: https://facebook.com/lawstand
+LinkedIn: https://linkedin.com/company/lawstand
+
+Dịch vụ:
+- AI tóm tắt pháp luật: rút gọn nhanh, dễ hiểu.
+- Chatbot pháp lý 24/7: hỗ trợ thủ tục cơ bản.
+- Tìm kiếm đa ngôn ngữ: Việt – Anh.
+- Kết nối luật sư online: minh bạch, đánh giá công khai.
+
+Tại Lawstand, chúng tôi tin rằng kiến thức pháp luật chỉ thật sự có giá trị khi mỗi người hiểu và bảo vệ được quyền lợi của mình.
+
+---
+
+Introduction:
+Hello! I’m the Lawstand legal chatbot, here to assist you with summarizing legal documents, answering basic procedures, and connecting you with trusted lawyers.
+
+Details:
+Lawstand is a digital legal platform (LegalTech) developed by LinkSpace. Our mission is to make legal information transparent, accessible, and easy to understand for Vietnamese citizens, overseas Vietnamese, and foreigners living in Vietnam. 
+Key features:
+- AI-powered legal document summarization with practical examples.
+- 24/7 legal chatbot for basic legal inquiries.
+- Online lawyer connection with certified and publicly reviewed experts.
+- Multilingual support: Vietnamese, English (expanding to Korean/Japanese).
+- Flexible service plans: free basic package, upgrade for in-depth consultation.
+
+Contact:
+Website: https://www.lawstand.vn
+Email: support@lawstand.vn
+Hotline: +84 123 456 789
+Address: 5th Floor, LinkSpace Building, Ho Chi Minh City, Vietnam
+Facebook: https://facebook.com/lawstand
+LinkedIn: https://linkedin.com/company/lawstand
+
+Services:
+- AI legal summarization: concise, clear, with examples.
+- 24/7 legal chatbot: answers to basic procedures.
+- Multilingual legal search: Vietnamese – English.
+- Online lawyer connection: transparent, with public reviews.
+
+At Lawstand, we believe legal knowledge is only valuable when people can truly understand and protect their rights.
+`;
+
+
+===== DIRECTORY TREE =====
+./
+    eslint.config.js
+    index.html
+    package.json
+    README.md
+    vite.config.js
+    public/
+        vite.svg
+    src/
+        App.jsx
+        index.css
+        main.jsx
+        components/
+            ChatbotIcon.jsx
+            ChatForm.jsx
+            ChatMessage.jsx
+            companyInfo.js
+    utils/
